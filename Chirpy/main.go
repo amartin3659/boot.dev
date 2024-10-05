@@ -1,14 +1,18 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
+	"os"
 	"strings"
 
+	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
 
-	"Chirpy/database"
+	"Chirpy/internal/database"
 )
 
 type apiConfig struct {
@@ -153,6 +157,14 @@ func healthz(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	godotenv.Load()
+	dbURL := os.Getenv("DB_URL")
+	db, err := sql.Open("postgres", dbURL)
+	if err != nil {
+		log.Fatal()
+	}
+	dbQueries := database.New(db)
+	log.Println(dbQueries)
 	mux := http.NewServeMux()
 	apiConfig := apiConfig{
 		fileserverHits: 0,
