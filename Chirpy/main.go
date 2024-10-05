@@ -5,6 +5,10 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+
+	_ "github.com/lib/pq"
+
+	"Chirpy/database"
 )
 
 type apiConfig struct {
@@ -39,17 +43,13 @@ func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
 	})
 }
 
-func (cfg *apiConfig) validateChirp(w http.ResponseWriter, r *http.Request) {
+func (cfg *apiConfig) createChirp(w http.ResponseWriter, r *http.Request) {
 	type parameters struct {
 		Body string `json:"body"`
 	}
 
 	type fixed struct {
 		Clean string `json:"cleaned_body"`
-	}
-
-	type response struct {
-		Valid bool `json:"valid"`
 	}
 
 	type e struct {
@@ -60,14 +60,13 @@ func (cfg *apiConfig) validateChirp(w http.ResponseWriter, r *http.Request) {
 	params := parameters{}
 	err := decoder.Decode(&params)
 	if err != nil {
-		// an error will be thrown if the JSON is invalid or has the wrong types
-		// any missing fields will simply have their values in the struct set to their zero value
-		// log.Printf("Error decoding parameters: %s", err)
 		er := e{
 			Err: "Something went wrong",
 		}
 		dat, err := json.Marshal(er)
 		if err != nil {
+			w.WriteHeader(500)
+			return
 		}
 		w.WriteHeader(500)
 		w.Write(dat)
@@ -80,6 +79,8 @@ func (cfg *apiConfig) validateChirp(w http.ResponseWriter, r *http.Request) {
 		}
 		dat, err := json.Marshal(er)
 		if err != nil {
+			w.WriteHeader(500)
+			return
 		}
 		w.WriteHeader(400)
 		w.Write(dat)
@@ -107,6 +108,8 @@ func (cfg *apiConfig) validateChirp(w http.ResponseWriter, r *http.Request) {
 		}
 		dat, err := json.Marshal(r)
 		if err != nil {
+			w.WriteHeader(500)
+			return
 		}
 		w.WriteHeader(200)
 		w.Write(dat)
@@ -122,6 +125,25 @@ func (cfg *apiConfig) validateChirp(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(200)
 	w.Write(dat)
+}
+
+func (cfg *apiConfig) getChirps(w http.ResponseWriter, r *http.Request) {
+	db, err := database.NewDB("database.json")
+	if err != nil {
+		fmt.Println(err)
+	}
+	fmt.Println(db)
+	chirps, err := db.GetChirps()
+	if err != nil {
+		fmt.Println(err)
+	}
+	w.Header().Set("Content-Type", "text/json; charset=utf-8")
+	w.WriteHeader(200)
+	c, err := json.Marshal(chirps)
+	if err != nil {
+		fmt.Println(err)
+	}
+	w.Write(c)
 }
 
 func healthz(w http.ResponseWriter, r *http.Request) {
@@ -144,7 +166,8 @@ func main() {
 	mux.HandleFunc("GET /api/healthz", healthz)
 	mux.HandleFunc("GET /admin/metrics", apiConfig.checkHits)
 	mux.HandleFunc("/api/reset", apiConfig.resetHits)
-	mux.HandleFunc("POST /api/validate_chirp", apiConfig.validateChirp)
+	mux.HandleFunc("POST /api/chirps", apiConfig.createChirp)
+	mux.HandleFunc("GET /api/chirps", apiConfig.getChirps)
 	fmt.Println("Server running...")
 	server.ListenAndServe()
 }
