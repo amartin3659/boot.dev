@@ -8,6 +8,8 @@ import (
 	"os"
 	"strconv"
 	"sync"
+
+	"github.com/google/uuid"
 )
 
 type DB struct {
@@ -15,10 +17,10 @@ type DB struct {
 	mux  *sync.Mutex
 }
 
-type Chirp struct {
-	Id   int    `json:"id"`
-	Body string `json:"body"`
-}
+// type Chirp struct {
+// 	Id   int    `json:"id"`
+// 	Body string `json:"body"`
+// }
 
 type DBStructure struct {
 	Chirps map[int]Chirp `json:"chirps"`
@@ -94,6 +96,33 @@ func (db *DB) GetChirps() (DBStructure, error) {
 	}
 
 	return c, nil
+}
+
+type Res struct {
+	ID        uuid.UUID `json:"id"`
+	CreatedAt string    `json:"created_at"`
+	UpdatedAt string    `json:"updated_at"`
+	Body      string    `json:"body"`
+	UserID    uuid.UUID `json:"user_id"`
+}
+
+func MapSqlChirpToJsonChirp(chirp Chirp) Res {
+	return Res{
+		ID:        chirp.ID,
+		CreatedAt: chirp.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		UpdatedAt: chirp.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+		Body:      chirp.Body,
+		UserID:    chirp.UserID,
+	}
+}
+
+func MapSqlChirpsToJsonChirps(chirps []Chirp) []Res {
+	var res []Res
+	for _, chirp := range chirps {
+		res = append(res, MapSqlChirpToJsonChirp(chirp))
+	}
+
+	return res
 }
 
 // func (db *DB) ensureDB() error {

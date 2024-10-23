@@ -1,0 +1,6 @@
+brew services start postgres@15
+brew services stop postgres@15
+sqlc generate
+goose postgres "$(cat connection_string.txt)" up
+goose postgres "$(cat connection_string.txt)" down
+psql chirpy

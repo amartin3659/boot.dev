@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
 
@@ -17,6 +19,15 @@ import (
 
 type apiConfig struct {
 	fileserverHits int
+	dbQueries      *database.Queries
+	platform       string
+}
+
+type User struct {
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Email     string    `json:"email"`
 }
 
 func (cfg *apiConfig) increaseHits() {
@@ -49,11 +60,8 @@ func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
 
 func (cfg *apiConfig) createChirp(w http.ResponseWriter, r *http.Request) {
 	type parameters struct {
-		Body string `json:"body"`
-	}
-
-	type fixed struct {
-		Clean string `json:"cleaned_body"`
+		Body   string    `json:"body"`
+		UserID uuid.UUID `json:"user_id"`
 	}
 
 	type e struct {
@@ -104,50 +112,105 @@ func (cfg *apiConfig) createChirp(w http.ResponseWriter, r *http.Request) {
 			newWords = append(newWords, word)
 		}
 	}
-
 	if isFixed {
 		fixedChirp := strings.Join(newWords, " ")
-		r := fixed{
-			Clean: fixedChirp,
+		chirp, err := cfg.dbQueries.CreateChirp(r.Context(), database.CreateChirpParams{Body: fixedChirp, UserID: params.UserID})
+		if err != nil {
+		}
+		r := database.Res{
+			ID:        chirp.ID,
+			CreatedAt: chirp.CreatedAt.Format("2006-01-02T15:04:05Z"),
+			UpdatedAt: chirp.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+			Body:      chirp.Body,
+			UserID:    chirp.UserID,
 		}
 		dat, err := json.Marshal(r)
 		if err != nil {
 			w.WriteHeader(500)
 			return
 		}
-		w.WriteHeader(200)
+		w.WriteHeader(201)
 		w.Write(dat)
 		return
 	}
-
-	r2 := fixed{
-		Clean: string(params.Body),
+	chirp, err := cfg.dbQueries.CreateChirp(r.Context(), database.CreateChirpParams{Body: params.Body, UserID: params.UserID})
+	if err != nil {
+	}
+	r2 := database.Res{
+		ID:        chirp.ID,
+		CreatedAt: chirp.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		UpdatedAt: chirp.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+		Body:      chirp.Body,
+		UserID:    chirp.UserID,
 	}
 	dat, err := json.Marshal(r2)
 	if err != nil {
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.WriteHeader(200)
+	w.WriteHeader(201)
 	w.Write(dat)
 }
 
 func (cfg *apiConfig) getChirps(w http.ResponseWriter, r *http.Request) {
-	db, err := database.NewDB("database.json")
+	chirps, err := cfg.dbQueries.ListChirps(r.Context())
 	if err != nil {
-		fmt.Println(err)
 	}
-	fmt.Println(db)
-	chirps, err := db.GetChirps()
-	if err != nil {
-		fmt.Println(err)
-	}
+	res := database.MapSqlChirpsToJsonChirps(chirps)
 	w.Header().Set("Content-Type", "text/json; charset=utf-8")
 	w.WriteHeader(200)
-	c, err := json.Marshal(chirps)
+	c, err := json.Marshal(res)
 	if err != nil {
 		fmt.Println(err)
 	}
 	w.Write(c)
+}
+
+func (cfg *apiConfig) getChirpById(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("chirpID")
+	chirp, err := cfg.dbQueries.ListChirp(r.Context(), uuid.MustParse(id))
+	if err != nil {
+	}
+	res := database.MapSqlChirpToJsonChirp(chirp)
+	w.WriteHeader(200)
+	c, err := json.Marshal(res)
+	if err != nil {
+	}
+	w.Write(c)
+}
+
+func (cfg *apiConfig) createUser(w http.ResponseWriter, r *http.Request) {
+	type parameters struct {
+		Email string `json:"email"`
+	}
+
+	decoder := json.NewDecoder(r.Body)
+	params := parameters{}
+	err := decoder.Decode(&params)
+	if err != nil {
+	}
+	user, err := cfg.dbQueries.CreateUser(r.Context(), params.Email)
+	if err != nil {
+	}
+	newUser := User{
+		ID:        user.ID,
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+		Email:     user.Email,
+	}
+	userJSON, err := json.Marshal(newUser)
+	if err != nil {
+	}
+	w.WriteHeader(201)
+	w.Write(userJSON)
+}
+
+func (cfg *apiConfig) resetUsers(w http.ResponseWriter, r *http.Request) {
+	if cfg.platform != "dev" {
+		w.WriteHeader(403)
+		return
+	}
+
+	cfg.dbQueries.ResetUsers(r.Context())
 }
 
 func healthz(w http.ResponseWriter, r *http.Request) {
@@ -159,6 +222,7 @@ func healthz(w http.ResponseWriter, r *http.Request) {
 func main() {
 	godotenv.Load()
 	dbURL := os.Getenv("DB_URL")
+	platform := os.Getenv("PLATFORM")
 	db, err := sql.Open("postgres", dbURL)
 	if err != nil {
 		log.Fatal()
@@ -168,6 +232,8 @@ func main() {
 	mux := http.NewServeMux()
 	apiConfig := apiConfig{
 		fileserverHits: 0,
+		dbQueries:      dbQueries,
+		platform:       platform,
 	}
 	server := http.Server{
 		Addr:    ":8080",
@@ -178,8 +244,11 @@ func main() {
 	mux.HandleFunc("GET /api/healthz", healthz)
 	mux.HandleFunc("GET /admin/metrics", apiConfig.checkHits)
 	mux.HandleFunc("/api/reset", apiConfig.resetHits)
-	mux.HandleFunc("POST /api/chirps", apiConfig.createChirp)
 	mux.HandleFunc("GET /api/chirps", apiConfig.getChirps)
+	mux.HandleFunc("GET /api/chirps/{chirpID}", apiConfig.getChirpById)
+	mux.HandleFunc("POST /api/users", apiConfig.createUser)
+	mux.HandleFunc("POST /admin/reset", apiConfig.resetUsers)
+	mux.HandleFunc("POST /api/chirps", apiConfig.createChirp)
 	fmt.Println("Server running...")
 	server.ListenAndServe()
 }
