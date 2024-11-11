@@ -14,6 +14,7 @@ import (
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
 
+	"Chirpy/internal/auth"
 	"Chirpy/internal/database"
 )
 
@@ -21,13 +22,20 @@ type apiConfig struct {
 	fileserverHits int
 	dbQueries      *database.Queries
 	platform       string
+	token          string
 }
 
 type User struct {
-	ID        uuid.UUID `json:"id"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	Email     string    `json:"email"`
+	ID           uuid.UUID `json:"id"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	Email        string    `json:"email"`
+	Token        string    `json:"token"`
+	RefreshToken string    `json:"refresh_token"`
+}
+
+type Token struct {
+	Token string `json:"token"`
 }
 
 func (cfg *apiConfig) increaseHits() {
@@ -68,9 +76,22 @@ func (cfg *apiConfig) createChirp(w http.ResponseWriter, r *http.Request) {
 		Err string `json:"error"`
 	}
 
+	token, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		w.WriteHeader(401)
+		return
+	}
+
+	id, err := auth.ValidateJWT(token, []byte(cfg.token))
+	if err != nil {
+		w.WriteHeader(401)
+		return
+	}
+
 	decoder := json.NewDecoder(r.Body)
 	params := parameters{}
-	err := decoder.Decode(&params)
+	params.UserID = id
+	err = decoder.Decode(&params)
 	if err != nil {
 		er := e{
 			Err: "Something went wrong",
@@ -180,7 +201,8 @@ func (cfg *apiConfig) getChirpById(w http.ResponseWriter, r *http.Request) {
 
 func (cfg *apiConfig) createUser(w http.ResponseWriter, r *http.Request) {
 	type parameters struct {
-		Email string `json:"email"`
+		Email    string `json:"email"`
+		Password string `json:"password"`
 	}
 
 	decoder := json.NewDecoder(r.Body)
@@ -188,7 +210,14 @@ func (cfg *apiConfig) createUser(w http.ResponseWriter, r *http.Request) {
 	err := decoder.Decode(&params)
 	if err != nil {
 	}
-	user, err := cfg.dbQueries.CreateUser(r.Context(), params.Email)
+	hashedPass, err := auth.HashedPassword(params.Password)
+	if err != nil {
+	}
+	userCred := database.CreateUserParams{
+		Email:          params.Email,
+		HashedPassword: hashedPass,
+	}
+	user, err := cfg.dbQueries.CreateUser(r.Context(), userCred)
 	if err != nil {
 	}
 	newUser := User{
@@ -202,6 +231,103 @@ func (cfg *apiConfig) createUser(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(201)
 	w.Write(userJSON)
+}
+
+func (cfg *apiConfig) loginUser(w http.ResponseWriter, r *http.Request) {
+	type parameters struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	decoder := json.NewDecoder(r.Body)
+	params := parameters{}
+	err := decoder.Decode(&params)
+	if err != nil {
+	}
+	user, err := cfg.dbQueries.GetUserByEmail(r.Context(), params.Email)
+	if err != nil {
+		w.WriteHeader(401)
+		w.Write([]byte("Incorrect email or password"))
+		return
+	}
+	hashErr := auth.CheckPasswordHash(params.Password, user.HashedPassword)
+	if hashErr != nil {
+		w.WriteHeader(401)
+		w.Write([]byte("Incorrect email or password"))
+		return
+	}
+	expiresInSeconds := 3600
+	t, err := auth.MakeJWT(user.ID, []byte(cfg.token), time.Duration(expiresInSeconds)*time.Second)
+	if err != nil {
+		w.WriteHeader(401)
+		return
+	}
+	refreshToken, err := auth.MakeRefreshToken()
+	if err != nil {
+	}
+	// insert refresh token into db
+	rt, err := cfg.dbQueries.CreateRefreshToken(r.Context(), database.CreateRefreshTokenParams{Token: refreshToken, UserID: user.ID})
+	if err != nil {
+	}
+	newUser := User{
+		ID:           user.ID,
+		CreatedAt:    user.CreatedAt,
+		UpdatedAt:    user.UpdatedAt,
+		Email:        user.Email,
+		Token:        t,
+		RefreshToken: rt.Token,
+	}
+	userJSON, err := json.Marshal(newUser)
+	if err != nil {
+	}
+	w.WriteHeader(200)
+	w.Write(userJSON)
+}
+
+func (cfg *apiConfig) refreshToken(w http.ResponseWriter, r *http.Request) {
+	authToken, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+	}
+	rf, err := cfg.dbQueries.GetRefreshToken(r.Context(), authToken)
+	if err != nil {
+		w.WriteHeader(401)
+		return
+	}
+	if rf.RevokedAt.Valid {
+		w.WriteHeader(401)
+		return
+	}
+	userID, err := cfg.dbQueries.GetUserByRefreshToken(r.Context(), rf.Token)
+	if err != nil {
+	}
+	if userID == uuid.Nil {
+		w.WriteHeader(401)
+		return
+	}
+	expiresInSeconds := 3600
+	t, err := auth.MakeJWT(userID, []byte(cfg.token), time.Duration(expiresInSeconds)*time.Second)
+	if err != nil {
+		w.WriteHeader(401)
+		return
+	}
+	newToken := Token{
+		Token: t,
+	}
+	ret, err := json.Marshal(newToken)
+	if err != nil {
+	}
+	w.WriteHeader(200)
+	w.Write(ret)
+}
+
+func (cfg *apiConfig) revokeToken(w http.ResponseWriter, r *http.Request) {
+	authToken, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+	}
+	err = cfg.dbQueries.UpdateRefreshToken(r.Context(), authToken)
+	if err != nil {
+		log.Println(err)
+	}
+	w.WriteHeader(204)
 }
 
 func (cfg *apiConfig) resetUsers(w http.ResponseWriter, r *http.Request) {
@@ -223,17 +349,18 @@ func main() {
 	godotenv.Load()
 	dbURL := os.Getenv("DB_URL")
 	platform := os.Getenv("PLATFORM")
+	tokenSecret := os.Getenv("TOKEN_SECRET")
 	db, err := sql.Open("postgres", dbURL)
 	if err != nil {
 		log.Fatal()
 	}
 	dbQueries := database.New(db)
-	log.Println(dbQueries)
 	mux := http.NewServeMux()
 	apiConfig := apiConfig{
 		fileserverHits: 0,
 		dbQueries:      dbQueries,
 		platform:       platform,
+		token:          tokenSecret,
 	}
 	server := http.Server{
 		Addr:    ":8080",
@@ -249,6 +376,9 @@ func main() {
 	mux.HandleFunc("POST /api/users", apiConfig.createUser)
 	mux.HandleFunc("POST /admin/reset", apiConfig.resetUsers)
 	mux.HandleFunc("POST /api/chirps", apiConfig.createChirp)
+	mux.HandleFunc("POST /api/login", apiConfig.loginUser)
+	mux.HandleFunc("POST /api/refresh", apiConfig.refreshToken)
+	mux.HandleFunc("POST /api/revoke", apiConfig.revokeToken)
 	fmt.Println("Server running...")
 	server.ListenAndServe()
 }
