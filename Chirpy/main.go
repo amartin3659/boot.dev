@@ -187,16 +187,24 @@ func (cfg *apiConfig) getChirps(w http.ResponseWriter, r *http.Request) {
 }
 
 func (cfg *apiConfig) getChirpById(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("chirpID")
-	chirp, err := cfg.dbQueries.ListChirp(r.Context(), uuid.MustParse(id))
-	if err != nil {
+	if r.Method == http.MethodGet {
+		id := r.PathValue("chirpID")
+		chirp, err := cfg.dbQueries.ListChirp(r.Context(), uuid.MustParse(id))
+		if err != nil {
+			w.WriteHeader(404)
+			return
+		}
+		res := database.MapSqlChirpToJsonChirp(chirp)
+		w.WriteHeader(200)
+		c, err := json.Marshal(res)
+		if err != nil {
+		}
+		w.Write(c)
 	}
-	res := database.MapSqlChirpToJsonChirp(chirp)
-	w.WriteHeader(200)
-	c, err := json.Marshal(res)
-	if err != nil {
+
+	if r.Method == http.MethodDelete {
+		cfg.deleteChirpById(w, r)
 	}
-	w.Write(c)
 }
 
 func (cfg *apiConfig) createUser(w http.ResponseWriter, r *http.Request) {
@@ -230,6 +238,43 @@ func (cfg *apiConfig) createUser(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 	}
 	w.WriteHeader(201)
+	w.Write(userJSON)
+}
+
+func (cfg *apiConfig) updateUser(w http.ResponseWriter, r *http.Request) {
+	authToken, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+	}
+	type request struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	decoder := json.NewDecoder(r.Body)
+	params := request{}
+	err = decoder.Decode(&params)
+	if err != nil {
+	}
+	hashedPass, err := auth.HashedPassword(params.Password)
+	if err != nil {
+	}
+	userID, err := auth.ValidateJWT(authToken, []byte(cfg.token))
+	if err != nil {
+		w.WriteHeader(401)
+		return
+	}
+	user, err := cfg.dbQueries.UpdateUserByID(r.Context(), database.UpdateUserByIDParams{Email: params.Email, HashedPassword: hashedPass, ID: userID})
+	if err != nil {
+	}
+	newUser := User{
+		ID:        user.ID,
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+		Email:     user.Email,
+	}
+	userJSON, err := json.Marshal(newUser)
+	if err != nil {
+	}
+	w.WriteHeader(200)
 	w.Write(userJSON)
 }
 
@@ -339,6 +384,33 @@ func (cfg *apiConfig) resetUsers(w http.ResponseWriter, r *http.Request) {
 	cfg.dbQueries.ResetUsers(r.Context())
 }
 
+func (cfg *apiConfig) deleteChirpById(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("chirpID")
+	chirp, err := cfg.dbQueries.ListChirp(r.Context(), uuid.MustParse(id))
+	if err != nil {
+		w.WriteHeader(404)
+		return
+	}
+	authToken, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+	}
+	userID, err := auth.ValidateJWT(authToken, []byte(cfg.token))
+	if err != nil {
+		w.WriteHeader(401)
+		return
+	}
+	if chirp.UserID != userID {
+		w.WriteHeader(403)
+		return
+	}
+	err = cfg.dbQueries.DeleteChirpById(r.Context(), uuid.MustParse(id))
+	if err != nil {
+		w.WriteHeader(500)
+		return
+	}
+	w.WriteHeader(204)
+}
+
 func healthz(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(200)
@@ -372,8 +444,9 @@ func main() {
 	mux.HandleFunc("GET /admin/metrics", apiConfig.checkHits)
 	mux.HandleFunc("/api/reset", apiConfig.resetHits)
 	mux.HandleFunc("GET /api/chirps", apiConfig.getChirps)
-	mux.HandleFunc("GET /api/chirps/{chirpID}", apiConfig.getChirpById)
+	mux.HandleFunc("/api/chirps/{chirpID}", apiConfig.getChirpById)
 	mux.HandleFunc("POST /api/users", apiConfig.createUser)
+	mux.HandleFunc("PUT /api/users", apiConfig.updateUser)
 	mux.HandleFunc("POST /admin/reset", apiConfig.resetUsers)
 	mux.HandleFunc("POST /api/chirps", apiConfig.createChirp)
 	mux.HandleFunc("POST /api/login", apiConfig.loginUser)

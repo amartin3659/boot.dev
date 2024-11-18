@@ -17,3 +17,6 @@ SELECT * FROM chirps WHERE id = $1;
 
 -- name: ResetChirps :exec
 DELETE FROM chirps;
+
+-- name: DeleteChirpById :exec
+DELETE FROM chirps WHERE id = $1;
