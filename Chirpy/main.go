@@ -411,6 +411,10 @@ func (cfg *apiConfig) deleteChirpById(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(204)
 }
 
+func (cfg *apiConfig) handleWebhooks(w http.ResponseWriter, r *http.Request) {
+
+}
+
 func healthz(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(200)
@@ -452,6 +456,7 @@ func main() {
 	mux.HandleFunc("POST /api/login", apiConfig.loginUser)
 	mux.HandleFunc("POST /api/refresh", apiConfig.refreshToken)
 	mux.HandleFunc("POST /api/revoke", apiConfig.revokeToken)
+	mux.HandleFunc("POST /api/polka/webhooks", apiConfig.handleWebhooks)
 	fmt.Println("Server running...")
 	server.ListenAndServe()
 }

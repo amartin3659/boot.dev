@@ -13,7 +13,10 @@ RETURNING *;
 SELECT * FROM users WHERE email = $1;
 
 -- name: UpdateUserByID :one
-UPDATE users set email = $1, hashed_password = $2 where id = $3 RETURNING *;
+UPDATE users SET email = $1, hashed_password = $2 WHERE id = $3 RETURNING *;
+
+-- name: UpdateUserChirpyRedByID :one
+UPDATE users SET is_chirpy_red = $1 WHERE id = $2 RETURNING *;
 
 -- name: ResetUsers :exec
 DELETE FROM users;
