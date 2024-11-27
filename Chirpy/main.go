@@ -23,6 +23,7 @@ type apiConfig struct {
 	dbQueries      *database.Queries
 	platform       string
 	token          string
+	polkaKey       string
 }
 
 type User struct {
@@ -32,6 +33,7 @@ type User struct {
 	Email        string    `json:"email"`
 	Token        string    `json:"token"`
 	RefreshToken string    `json:"refresh_token"`
+	IsChirpyRed  bool      `json:"is_chirpy_red"`
 }
 
 type Token struct {
@@ -229,10 +231,11 @@ func (cfg *apiConfig) createUser(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 	}
 	newUser := User{
-		ID:        user.ID,
-		CreatedAt: user.CreatedAt,
-		UpdatedAt: user.UpdatedAt,
-		Email:     user.Email,
+		ID:          user.ID,
+		CreatedAt:   user.CreatedAt,
+		UpdatedAt:   user.UpdatedAt,
+		Email:       user.Email,
+		IsChirpyRed: user.IsChirpyRed,
 	}
 	userJSON, err := json.Marshal(newUser)
 	if err != nil {
@@ -266,10 +269,11 @@ func (cfg *apiConfig) updateUser(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 	}
 	newUser := User{
-		ID:        user.ID,
-		CreatedAt: user.CreatedAt,
-		UpdatedAt: user.UpdatedAt,
-		Email:     user.Email,
+		ID:          user.ID,
+		CreatedAt:   user.CreatedAt,
+		UpdatedAt:   user.UpdatedAt,
+		Email:       user.Email,
+		IsChirpyRed: user.IsChirpyRed,
 	}
 	userJSON, err := json.Marshal(newUser)
 	if err != nil {
@@ -320,6 +324,7 @@ func (cfg *apiConfig) loginUser(w http.ResponseWriter, r *http.Request) {
 		Email:        user.Email,
 		Token:        t,
 		RefreshToken: rt.Token,
+		IsChirpyRed:  user.IsChirpyRed,
 	}
 	userJSON, err := json.Marshal(newUser)
 	if err != nil {
@@ -413,6 +418,41 @@ func (cfg *apiConfig) deleteChirpById(w http.ResponseWriter, r *http.Request) {
 
 func (cfg *apiConfig) handleWebhooks(w http.ResponseWriter, r *http.Request) {
 
+	key, err := auth.GetAPIKey(r.Header)
+	if err != nil {
+
+	}
+
+	if key != cfg.polkaKey {
+		w.WriteHeader(401)
+		return
+	}
+
+	type webhookRequest struct {
+		Event string `json:"event"`
+		Data  struct {
+			UserID string `json:"user_id"`
+		} `json:"data"`
+	}
+
+	decoder := json.NewDecoder(r.Body)
+	req := webhookRequest{}
+	err = decoder.Decode(&req)
+	if err != nil {
+	}
+
+	if req.Event == "user.upgraded" {
+		_, err := cfg.dbQueries.UpdateUserChirpyRedByID(r.Context(), database.UpdateUserChirpyRedByIDParams{IsChirpyRed: true, ID: uuid.MustParse(req.Data.UserID)})
+		if err != nil {
+			w.WriteHeader(404)
+			return
+		}
+	} else {
+		w.WriteHeader(204)
+		return
+	}
+
+	w.WriteHeader(204)
 }
 
 func healthz(w http.ResponseWriter, r *http.Request) {
@@ -426,6 +466,7 @@ func main() {
 	dbURL := os.Getenv("DB_URL")
 	platform := os.Getenv("PLATFORM")
 	tokenSecret := os.Getenv("TOKEN_SECRET")
+	polkaKey := os.Getenv("POLKA_KEY")
 	db, err := sql.Open("postgres", dbURL)
 	if err != nil {
 		log.Fatal()
@@ -437,6 +478,7 @@ func main() {
 		dbQueries:      dbQueries,
 		platform:       platform,
 		token:          tokenSecret,
+		polkaKey:       polkaKey,
 	}
 	server := http.Server{
 		Addr:    ":8080",

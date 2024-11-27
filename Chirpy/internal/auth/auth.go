@@ -108,3 +108,19 @@ func MakeRefreshToken() (string, error) {
 	s := hex.EncodeToString(b)
 	return s, nil
 }
+
+func GetAPIKey(headers http.Header) (string, error) {
+	authHeader := headers.Get("Authorization")
+	if authHeader == "" {
+		return "", errors.New("authorization header is missing")
+	}
+
+	// Check if the header starts with "ApiKey "
+	const prefix = "ApiKey "
+	if !strings.HasPrefix(authHeader, prefix) {
+		return "", errors.New("authorization header is not in the correct format")
+	}
+
+	// Extract and return the key after "ApiKey "
+	return strings.TrimSpace(strings.TrimPrefix(authHeader, prefix)), nil
+}
