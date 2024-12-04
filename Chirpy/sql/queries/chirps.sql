@@ -12,8 +12,17 @@ RETURNING *;
 -- name: ListChirps :many
 SELECT * FROM chirps ORDER BY created_at ASC;
 
+-- name: ListChirpsDesc :many
+SELECT * FROM chirps ORDER BY created_at DESC;
+
 -- name: ListChirp :one
 SELECT * FROM chirps WHERE id = $1;
+
+-- name: ListChirpByAuthorID :many
+SELECT * FROM chirps WHERE user_id = $1 ORDER BY created_at ASC;
+
+-- name: ListChirpByAuthorIDDesc :many
+SELECT * FROM chirps WHERE user_id = $1 ORDER BY created_at DESC;
 
 -- name: ResetChirps :exec
 DELETE FROM chirps;

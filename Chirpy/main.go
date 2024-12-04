@@ -175,17 +175,42 @@ func (cfg *apiConfig) createChirp(w http.ResponseWriter, r *http.Request) {
 }
 
 func (cfg *apiConfig) getChirps(w http.ResponseWriter, r *http.Request) {
-	chirps, err := cfg.dbQueries.ListChirps(r.Context())
-	if err != nil {
+	query := r.URL.Query()
+	authorID := query.Get("author_id")
+	sort := query.Get("sort")
+	if sort != "asc" && sort != "desc" {
+		sort = "asc"
 	}
-	res := database.MapSqlChirpsToJsonChirps(chirps)
-	w.Header().Set("Content-Type", "text/json; charset=utf-8")
-	w.WriteHeader(200)
-	c, err := json.Marshal(res)
-	if err != nil {
-		fmt.Println(err)
+	var chirps []database.Chirp
+	if authorID == "" {
+		if sort == "desc" {
+			chirps, _ = cfg.dbQueries.ListChirpsDesc(r.Context())
+		} else {
+			chirps, _ = cfg.dbQueries.ListChirps(r.Context())
+		}
+		res := database.MapSqlChirpsToJsonChirps(chirps)
+		w.Header().Set("Content-Type", "text/json; charset=utf-8")
+		w.WriteHeader(200)
+		c, err := json.Marshal(res)
+		if err != nil {
+			fmt.Println(err)
+		}
+		w.Write(c)
+	} else {
+		if sort == "desc" {
+			chirps, _ = cfg.dbQueries.ListChirpByAuthorIDDesc(r.Context(), uuid.MustParse(authorID))
+		} else {
+			chirps, _ = cfg.dbQueries.ListChirpByAuthorID(r.Context(), uuid.MustParse(authorID))
+		}
+		res := database.MapSqlChirpsToJsonChirps(chirps)
+		w.Header().Set("Content-Type", "text/json; charset=utf-8")
+		w.WriteHeader(200)
+		c, err := json.Marshal(res)
+		if err != nil {
+			fmt.Println(err)
+		}
+		w.Write(c)
 	}
-	w.Write(c)
 }
 
 func (cfg *apiConfig) getChirpById(w http.ResponseWriter, r *http.Request) {
